@@ -1,6 +1,8 @@
 package com.dongxuny.cos_demo;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -14,6 +16,7 @@ import com.qcloud.cos.exception.CosServiceException;
 import com.qcloud.cos.model.CopyObjectRequest;
 import com.qcloud.cos.model.CopyResult;
 import com.qcloud.cos.model.GetObjectRequest;
+import com.qcloud.cos.model.ObjectMetadata;
 import com.qcloud.cos.model.PutObjectRequest;
 import com.qcloud.cos.model.UploadResult;
 import com.qcloud.cos.region.Region;
@@ -29,7 +32,7 @@ import com.qcloud.cos.transfer.TransferProgress;
 import com.qcloud.cos.transfer.Upload;
 
 public class TransferManagerDemo {
-	public static void main(String args[]) {
+	public static void main(String args[]) throws FileNotFoundException {
 		// uploadFile();
 		// uploadDir();
 		// uploadFileList();
@@ -40,6 +43,7 @@ public class TransferManagerDemo {
 		// pauseDownloadFileAndResume();
 		// copyFileForDiffRegion();
 		// copyFileForSameRegion();
+		// uploadWithServerSideEncryption();
 	}
 	
     // 打印进度，并且等待完成。
@@ -59,6 +63,50 @@ public class TransferManagerDemo {
         System.out.println(transfer.getState());
     }
 
+    public static void uploadWithServerSideEncryption() throws FileNotFoundException {
+        // 1 初始化用户身份信息(secretId, secretKey)
+        COSCredentials cred = new BasicCOSCredentials("Your SecretId", "Your SecretKey");
+        // 2 设置bucket的区域, COS地域的简称请参照 https://www.qcloud.com/document/product/436/6224
+        ClientConfig clientConfig = new ClientConfig(new Region("Region where bucket located"));
+        // 3 生成cos客户端
+        COSClient cosclient = new COSClient(cred, clientConfig);
+        // bucket名需包含appid
+        String bucketName = "bucketName-appID";
+
+        ExecutorService threadPool = Executors.newFixedThreadPool(32);
+        // 传入一个threadpool, 若不传入线程池, 默认TransferManager中会生成一个单线程的线程池。
+        TransferManager transferManager = new TransferManager(cosclient, threadPool);
+
+        String key = "your object key";
+        
+        FileInputStream input = new FileInputStream(new File("Your File Path"));
+        ObjectMetadata meta = new ObjectMetadata();
+        // 目前只支持AES-256
+        meta.setSSEAlgorithm("AES256");
+        
+        PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, key, input, meta);
+        
+        try {
+            // 返回一个异步结果Upload, 可同步的调用waitForUploadResult等待upload结束, 成功返回UploadResult, 失败抛出异常.
+            long startTime = System.currentTimeMillis();
+            Upload upload = transferManager.upload(putObjectRequest);
+            showTransferProgress(upload);
+            UploadResult uploadResult = upload.waitForUploadResult();
+            long endTime = System.currentTimeMillis();
+            System.out.println("Duration: " + (endTime - startTime) / 1000);
+            System.out.println("Etag: " + uploadResult.getETag());
+        } catch (CosServiceException e) {
+            e.printStackTrace();
+        } catch (CosClientException e) {
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        transferManager.shutdownNow();
+        cosclient.shutdown();
+    }
+    
     // 上传文件, 根据文件大小自动选择简单上传或者分块上传。
     public static void uploadFile() {
         // 1 初始化用户身份信息(secretId, secretKey)
@@ -77,6 +125,7 @@ public class TransferManagerDemo {
         String key = "your object key";
         File localFile = new File("File to transfer");
         PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, key, localFile);
+        
         try {
             // 返回一个异步结果Upload, 可同步的调用waitForUploadResult等待upload结束, 成功返回UploadResult, 失败抛出异常.
             long startTime = System.currentTimeMillis();
